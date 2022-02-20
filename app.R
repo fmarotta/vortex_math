@@ -1,13 +1,9 @@
 library(shiny)
 library(ggplot2)
 library(ggforce)
-library(RColorBrewer)
-
-options(shiny.port = 2711)
+library(data.table)
 
 mod <- function(a, b) a %% b
-
-col_vector <- grDevices::colors()[grep('(gr(a|e)y)|(white)', grDevices::colors(), invert = T)]
 
 ui <- fluidPage(
     fluidRow(
@@ -47,27 +43,21 @@ ui <- fluidPage(
 )
 
 server <- function(input, output) {
-    output$plot <- renderPlot({
-        d <- data.frame(
+    p <- reactive({
+        d <- data.table(
             theta = cumsum(rep(2*pi/(input$mod), input$mod)),
-            label = as.character(1:input$mod)
+            label = as.character(1:input$mod),
+            path = 0,
+            dist = 0
         )
         d$y <- cos(d$theta)
         d$x <- sin(d$theta)
 
-        p <- ggplot(d, aes(x, y)) +
-            geom_circle(aes(x0 = 0, y0 = 0, r = 1), inherit.aes = F) +
-            geom_point() +
-            geom_label(aes(label = label)) +
-            coord_fixed() +
-            theme_void() +
-            if (input$colorBy != "Path") scale_color_viridis_c() else scale_color_viridis_d()# +
-            #theme(legend.pos = "none")
-
         i <- 0
+        q <- 1
         pool <- c()
         nmod <- input$n %% input$mod
-        q <- 1
+        e <- data.table()
         while (i < input$mod - 1) {
             i <- i + 1
             if (i %in% pool)
@@ -82,39 +72,48 @@ server <- function(input, output) {
             m <- m[1:j]
             pool <- unique(c(pool, m))
             m[m == 0] <- input$mod
-            if (input$colorBy == "Segment angle")
-                p <- p + geom_path(
-                    aes(color = atan2(x, y)),
-                    data = d[m, ],
-                    arrow = if (input$arrows) grid::arrow() else NULL
-                )
-            else if (input$colorBy == "Segment length") {
-                dd <- d[m, ]
-                dd$dist <- sqrt(
-                    (dd$x[c(2:nrow(dd), nrow(dd))] - dd$x)^2 +
-                    (dd$y[c(2:nrow(dd), nrow(dd))] - dd$y)^2
-                )
-                p <- p + geom_path(
-                    aes(color = dist),
-                    data = dd,
-                    arrow = if (input$arrows) grid::arrow() else NULL
-                )
-            } else if (input$colorBy == "Path") {
-                dd <- d[m, ]
-                dd$path = q
-                q <- q + 1
-                p <- p + geom_path(
-                    aes(color = as.character(path)),
-                    data = dd,
-                    arrow = if (input$arrows) grid::arrow() else NULL
-                )
-            } else if (input$colorBy == "Nothing") 
-                p <- p + geom_path(
-                    data = d[m, ],
-                    color = "black",
-                    arrow = if (input$arrows) grid::arrow() else NULL
-                )
+            e <- rbind(e, d[m][, path := q][, dist := sqrt(
+                (x[c(2:nrow(.SD), nrow(.SD))] - x)^2 +
+                (y[c(2:nrow(.SD), nrow(.SD))] - y)^2
+            )])
+            q <- q + 1
         }
+
+        ggplot(e, aes(x, y)) +
+            geom_circle(aes(x0 = 0, y0 = 0, r = 1), data = d, inherit.aes = FALSE) +
+            geom_point(data = d) +
+            geom_label(aes(label = label), data = d) +
+            coord_fixed() +
+            theme_void()
+    })
+
+    output$plot <- renderPlot({
+        if (input$colorBy == "Segment angle")
+            p <- p() + geom_path(
+                aes(color = atan2(x, y), group = path),
+                arrow = if (input$arrows) grid::arrow() else NULL
+            ) +
+            scale_color_viridis_c() +
+            theme(legend.pos = "none")
+        else if (input$colorBy == "Segment length")
+            p <- p() + geom_path(
+                aes(color = dist, group = path),
+                arrow = if (input$arrows) grid::arrow() else NULL
+            ) +
+            scale_color_viridis_c() +
+            theme(legend.pos = "none")
+        else if (input$colorBy == "Path")
+            p <- p() + geom_path(
+                aes(color = as.factor(path), group = path),
+                arrow = if (input$arrows) grid::arrow() else NULL
+            ) +
+            scale_color_viridis_d(name = "Path")
+        else if (input$colorBy == "Nothing")
+            p <- p() + geom_path(
+                aes(group = path),
+                color = "black",
+                arrow = if (input$arrows) grid::arrow() else NULL
+            )
         p
     })
 }
